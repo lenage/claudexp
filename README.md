@@ -10,17 +10,20 @@ Local web app for analyzing Claude Code session logs. Upload `.jsonl` files to e
 
 **SQL Console** — Run arbitrary SQL against the raw event data and processed trajectory tables.
 
-## Setup
+## Quick Start (Docker)
+
+```
+docker compose up
+```
+
+Opens at [http://localhost:8765](http://localhost:8765). Session data persists in a Docker volume.
+
+## Local Setup
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```
 uv sync
-```
-
-## Usage
-
-```
 uv run claudexpt
 ```
 

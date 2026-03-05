@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - sessions:/app/sessions
+
+volumes:
+  sessions:

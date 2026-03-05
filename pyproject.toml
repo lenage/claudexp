@@ -1,0 +1,18 @@
+[project]
+name = "claudexp"
+version = "0.1.0"
+description = "Local web app for analyzing Claude Code session logs — upload .jsonl files to explore conversation trajectories as git-style graphs, view token/cost reports, and query raw data with SQL."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "duckdb>=1.2",
+    "python-multipart>=0.0.18",
+    "jinja2>=3.1",
+]
+
+[project.scripts]
+claudexpt = "app.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

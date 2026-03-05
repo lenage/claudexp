@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SQL: {{ slug }}</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #111118; --border: #1a1a2e; --text: #ccc; --muted: #555; --accent: #f59e0b; --err: #f87171; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "SF Mono","Fira Code",monospace; padding: 32px; display: flex; flex-direction: column; height: 100vh; }
+  .nav { display: flex; gap: 16px; margin-bottom: 24px; font-size: 11px; }
+  .nav a { color: var(--muted); text-decoration: none; }
+  .nav a:hover { color: var(--accent); }
+  h1 { font-size: 18px; color: #fff; margin-bottom: 16px; }
+  .hint { font-size: 11px; color: #333; margin-bottom: 12px; }
+  #editor { display: flex; gap: 8px; margin-bottom: 16px; }
+  #sql { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; color: var(--text); font-family: inherit; font-size: 12px; resize: vertical; min-height: 60px; outline: none; }
+  #sql:focus { border-color: var(--accent); }
+  #run-btn { background: var(--accent); color: #000; border: none; border-radius: 6px; padding: 0 20px; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  #run-btn:hover { opacity: 0.9; }
+  #error { color: var(--err); font-size: 12px; margin-bottom: 8px; display: none; }
+  #info { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+  #result-wrap { flex: 1; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { position: sticky; top: 0; background: var(--surface); text-align: left; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--border); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Home</a>
+  <a href="/session/{{ name }}/trajectory">Trajectory</a>
+  <a href="/session/{{ name }}/report">Report</a>
+</div>
+<h1>SQL Console: {{ slug }}</h1>
+<p class="hint">Tables: raw (seq, type, uuid, parent_uuid, session_id, timestamp, is_sidechain, message, raw), traj (seq, id, fid, fpid, type, ts, lane, pi, items, toolName, toolStatus, toolUseId, progressType)</p>
+<div id="editor">
+  <textarea id="sql" rows="3" placeholder="SELECT * FROM raw LIMIT 10">SELECT type, count(*) as cnt FROM raw GROUP BY type ORDER BY cnt DESC</textarea>
+  <button id="run-btn">Run</button>
+</div>
+<div id="error"></div>
+<div id="info"></div>
+<div id="result-wrap"><table id="result"><thead></thead><tbody></tbody></table></div>
+<script>
+const sqlEl = document.getElementById('sql');
+const errEl = document.getElementById('error');
+const infoEl = document.getElementById('info');
+const thead = document.querySelector('#result thead');
+const tbody = document.querySelector('#result tbody');
+
+async function run() {
+  const sql = sqlEl.value.trim();
+  if (!sql) return;
+  errEl.style.display = 'none';
+  infoEl.textContent = 'Running...';
+  thead.innerHTML = ''; tbody.innerHTML = '';
+  try {
+    const resp = await fetch('/api/{{ name }}/query?sql=' + encodeURIComponent(sql));
+    const d = await resp.json();
+    if (d.error) { errEl.textContent = d.error; errEl.style.display = 'block'; infoEl.textContent = ''; return; }
+    infoEl.textContent = d.rows.length + ' rows';
+    const hr = document.createElement('tr');
+    for (const c of d.columns) { const th = document.createElement('th'); th.textContent = c; hr.appendChild(th); }
+    thead.appendChild(hr);
+    for (const row of d.rows) {
+      const tr = document.createElement('tr');
+      for (const val of row) { const td = document.createElement('td'); td.textContent = val === null ? 'NULL' : String(val); td.title = String(val); tr.appendChild(td); }
+      tbody.appendChild(tr);
+    }
+  } catch (e) { errEl.textContent = e.message; errEl.style.display = 'block'; infoEl.textContent = ''; }
+}
+
+document.getElementById('run-btn').addEventListener('click', run);
+sqlEl.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); } });
+</script>
+</body>
+</html>

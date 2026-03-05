@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Session: {{ slug }}</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --surface: #111118; --border: #1a1a2e;
+    --text: #ccc; --muted: #555;
+    --user: #60a5fa; --assistant: #f59e0b;
+    --tool-start: #4ade80; --tool-done: #2dd4bf; --tool-fail: #f87171;
+    --system: #c084fc;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "SF Mono","Fira Code",monospace; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+
+  #header { padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  #header h1 { font-size: 14px; font-weight: 600; color: #fff; }
+  #header .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  #legend { display: flex; gap: 14px; font-size: 11px; color: #888; }
+  .ldot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+  #main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Graph area */
+  #graph-area { flex: 7; position: relative; overflow: hidden; }
+  #scroll-container { width: 100%; height: 100%; overflow-y: auto; overflow-x: hidden; position: relative; }
+  #scroll-spacer { pointer-events: none; }
+
+  /* Small canvas overlay for dots + lines only */
+  #rail-canvas { position: absolute; top: 0; left: 0; z-index: 5; pointer-events: none; }
+
+  /* Virtualized DOM rows */
+  #label-layer { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; }
+  .row {
+    position: absolute; left: 0; right: 0;
+    display: flex; align-items: center; pointer-events: auto; cursor: pointer;
+    padding-left: 140px; padding-right: 16px; font-size: 11px; white-space: nowrap; overflow: hidden;
+  }
+  .row:hover { background: rgba(255,255,255,0.04); }
+  .row.selected { background: rgba(245,158,11,0.1); }
+  .row.head { background: rgba(96,165,250,0.08); border-left: 2px solid var(--user); }
+  .row.dimmed { opacity: 0.08; }
+  .row .tag { font-weight: 600; width: 48px; flex-shrink: 0; }
+  .row .desc { color: #555; flex: 1; overflow: hidden; text-overflow: ellipsis; margin-left: 4px; }
+  .row .meta { color: #2a2a3a; font-size: 10px; flex-shrink: 0; margin-left: 8px; }
+
+  /* Detail panel — 4/10 width */
+  #detail { flex: 3; border-left: 1px solid var(--border); overflow-y: auto; padding: 16px; background: var(--surface); }
+  #detail.closed { display: none; }
+  #detail h3 { font-size: 13px; font-weight: 600; margin-bottom: 10px; color: #fff; }
+  .field { margin-bottom: 8px; }
+  .field-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .field-value { font-size: 12px; color: var(--text); word-break: break-all; margin-top: 2px; }
+  .badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; margin-right: 4px; }
+  .b-user { background: #1e3a5f; color: var(--user); }
+  .b-asst { background: #4a2c17; color: var(--assistant); }
+  .b-tool { background: #1a1a2e; color: #818cf8; }
+  .b-err  { background: #3b1515; color: var(--tool-fail); }
+  .b-sys  { background: #2e1a2e; color: var(--system); }
+  .ptable { width: 100%; font-size: 11px; margin-top: 6px; border-collapse: collapse; }
+  .ptable td { padding: 3px 6px; vertical-align: top; border-bottom: 1px solid var(--border); }
+  .pk { color: #818cf8; white-space: nowrap; }
+  .pv { color: #999; word-break: break-all; }
+  .code-block { color:#e0e0e0; background:#0a0a0f; padding:8px; border-radius:4px; font-size:11px; white-space:pre-wrap; margin-top:4px; }
+
+  /* Controls */
+  #controls { padding: 10px 20px; border-top: 1px solid var(--border); flex-shrink: 0; display: flex; align-items: center; gap: 12px; background: var(--surface); }
+  .ctrl-btn { background: none; border: 1px solid var(--border); color: var(--text); width: 32px; height: 32px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: border-color 0.15s; }
+  .ctrl-btn:hover { border-color: var(--assistant); color: #fff; }
+  .ctrl-btn.active { border-color: var(--assistant); background: rgba(245,158,11,0.15); color: var(--assistant); }
+  #speed-label { font-size: 11px; color: var(--muted); min-width: 36px; text-align: center; }
+  #slider-wrap { flex: 1; display: flex; align-items: center; }
+  #time-slider { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; background: var(--border); border-radius: 2px; outline: none; }
+  #time-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--assistant); border-radius: 50%; cursor: pointer; }
+  #tl-info { font-size: 10px; color: var(--muted); min-width: 200px; text-align: right; }
+  #search-wrap { display: flex; gap: 8px; align-items: center; }
+  #search-input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text); font-size: 11px; width: 180px; font-family: inherit; outline: none; }
+  #search-input:focus { border-color: var(--assistant); }
+  #search-input::placeholder { color: #333; }
+  #search-count { font-size: 10px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div>
+    <h1>Session Trajectory</h1>
+    <div class="sub">{{ slug }} · click row to inspect</div>
+  </div>
+  <div id="legend">
+    <span><span class="ldot" style="background:var(--user)"></span>User</span>
+    <span><span class="ldot" style="background:var(--assistant)"></span>Assistant</span>
+    <span><span class="ldot" style="background:var(--tool-start)"></span>Tool start</span>
+    <span><span class="ldot" style="background:var(--tool-done)"></span>Tool done</span>
+    <span><span class="ldot" style="background:var(--tool-fail)"></span>Failed</span>
+    <span><span class="ldot" style="background:var(--system)"></span>System</span>
+  </div>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <a href="/" style="color:#555;text-decoration:none;font-size:11px;">Home</a>
+    <a href="/session/{{ name }}/report" style="color:#555;text-decoration:none;font-size:11px;">Report</a>
+    <a href="/session/{{ name }}/sql" style="color:#555;text-decoration:none;font-size:11px;">SQL</a>
+  </div>
+</div>
+
+<div id="main">
+  <div id="graph-area">
+    <canvas id="rail-canvas"></canvas>
+    <div id="scroll-container">
+      <div id="scroll-spacer"></div>
+      <div id="label-layer"></div>
+    </div>
+  </div>
+  <div id="detail"><div id="detail-content"></div></div>
+</div>
+
+<div id="controls">
+  <button class="ctrl-btn" id="btn-start" title="Jump to start">&#x23EE;</button>
+  <button class="ctrl-btn" id="btn-play" title="Play / Pause">&#x25B6;</button>
+  <button class="ctrl-btn" id="btn-end" title="Jump to end">&#x23ED;</button>
+  <button class="ctrl-btn" id="btn-speed" title="Step size"><span id="speed-label">2x</span></button>
+  <div id="slider-wrap"><input type="range" id="time-slider" min="0" max="100" value="100"></div>
+  <div id="tl-info"></div>
+  <div id="search-wrap">
+    <input type="text" id="search-input" placeholder="Search...">
+    <span id="search-count"></span>
+  </div>
+</div>
+
+<script>
+(async function() {
+'use strict';
+const resp = await fetch('/api/{{ name }}/trajectory');
+const TRAJECTORY_DATA = await resp.json();
+
+const data = TRAJECTORY_DATA;
+const N = data.length;
+const LANE_W = 24;
+const LEFT_PAD = 20;
+const NODE_R = 5;
+const TOP_PAD = 20;
+const RAIL_W = 140;
+const dpr = window.devicePixelRatio || 1;
+
+// ── Time-gap row heights ──
+const MIN_H = 22, MAX_H = 120, LOG_K = 8, LOG_T0 = 50;
+const rowH = new Float32Array(N);   // height of each row
+const yTop = new Float32Array(N);   // top Y of each row
+const deltaMs = new Float32Array(N); // ms gap from previous
+
+// Parse timestamps
+const tsMs = new Float64Array(N);
+for (let i = 0; i < N; i++) {
+  tsMs[i] = data[i].ts ? new Date(data[i].ts).getTime() : (i > 0 ? tsMs[i-1] : 0);
+}
+
+// Compute row heights from time deltas
+rowH[0] = MIN_H;
+deltaMs[0] = 0;
+yTop[0] = TOP_PAD;
+for (let i = 1; i < N; i++) {
+  const dt = Math.max(0, tsMs[i] - tsMs[i-1]);
+  deltaMs[i] = dt;
+  rowH[i] = Math.min(MAX_H, MIN_H + LOG_K * Math.log2(1 + dt / LOG_T0));
+  yTop[i] = yTop[i-1] + rowH[i-1];
+}
+const TOTAL_H = yTop[N-1] + rowH[N-1] + TOP_PAD;
+
+function nY(i) { return yTop[i] + rowH[i] / 2; }
+
+// Binary search: find first index whose yTop >= targetY
+function findFirst(targetY) {
+  let lo = 0, hi = N - 1;
+  while (lo < hi) { const m = (lo+hi)>>1; if (yTop[m] + rowH[m] < targetY) lo = m+1; else hi = m; }
+  return lo;
+}
+
+// Format time delta for display
+function fmtDelta(ms) {
+  if (ms < 10) return '';
+  if (ms < 1000) return '+' + Math.round(ms) + 'ms';
+  if (ms < 60000) return '+' + (ms/1000).toFixed(1) + 's';
+  const m = Math.floor(ms/60000), s = Math.round((ms%60000)/1000);
+  return '+' + m + 'm' + (s ? s + 's' : '');
+}
+
+// ── Pre-compute ──
+const COLORS = { user:'#60a5fa', assistant:'#f59e0b', system:'#c084fc', 'p-started':'#4ade80', 'p-completed':'#2dd4bf', 'p-failed':'#f87171' };
+function nColor(d) {
+  if (d.type==='user') return COLORS.user;
+  if (d.type==='assistant') return COLORS.assistant;
+  if (d.type==='system') return COLORS.system;
+  if (d.toolStatus==='failed') return COLORS['p-failed'];
+  if (d.toolStatus==='completed') return COLORS['p-completed'];
+  return COLORS['p-started'];
+}
+function nX(d) { return LEFT_PAD + (d.lane||0)*LANE_W + LANE_W/2; }
+
+function textPreview(d) {
+  if (!d.items) return '';
+  for (const it of d.items) if (it.kind==='text'&&it.preview) return it.preview.replace(/\n/g,' ').substring(0,100);
+  return '';
+}
+function toolUse(d) {
+  if (!d.items) return null;
+  for (const it of d.items) if (it.kind==='tool_use') return it;
+  return null;
+}
+function paramSum(p) {
+  if (!p) return '';
+  const k=Object.keys(p);
+  return k.slice(0,2).map(x=>x+'='+String(p[x]).substring(0,25)).join(', ')+(k.length>2?', ...':'');
+}
+
+// Pre-build label data
+const labels = new Array(N);
+for (let i=0;i<N;i++) {
+  const d=data[i]; let tag='',desc='',color='';
+  if (d.type==='user') { tag='USER'; color=COLORS.user; desc=textPreview(d); }
+  else if (d.type==='assistant') { tag='ASST'; color=COLORS.assistant; const tu=toolUse(d); desc=tu?tu.name+'('+paramSum(tu.params)+')':textPreview(d); }
+  else if (d.type==='progress') { tag=d.toolName||'PROG'; color=nColor(d); desc=d.toolStatus||''; }
+  else { tag='SYS'; color=COLORS.system; }
+  labels[i] = { tag, desc, color, ts: d.ts?d.ts.substring(11,19):'', seq: d.seq, delta: fmtDelta(deltaMs[i]) };
+}
+
+// ── DOM refs ──
+const graphArea = document.getElementById('graph-area');
+const scrollCt = document.getElementById('scroll-container');
+const spacer = document.getElementById('scroll-spacer');
+const labelLayer = document.getElementById('label-layer');
+const railCanvas = document.getElementById('rail-canvas');
+const ctx = railCanvas.getContext('2d');
+
+spacer.style.height = TOTAL_H + 'px';
+labelLayer.style.height = TOTAL_H + 'px';
+
+// ── State ──
+let visibleMax = N - 1;
+let selectedIdx = -1;
+let searchMatches = null;
+
+// ==============================
+// CANVAS: dots + lines + gap labels
+// ==============================
+let viewH = 0;
+
+function resizeRail() {
+  viewH = graphArea.clientHeight;
+  railCanvas.width = RAIL_W * dpr;
+  railCanvas.height = viewH * dpr;
+  railCanvas.style.width = RAIL_W + 'px';
+  railCanvas.style.height = viewH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resizeRail();
+
+function drawRail() {
+  ctx.clearRect(0, 0, RAIL_W, viewH);
+  const scrollY = scrollCt.scrollTop;
+  const first = Math.max(0, findFirst(scrollY) - 2);
+  const lastY = scrollY + viewH;
+  const last = Math.min(N - 1, visibleMax);
+
+  // Edges
+  ctx.lineWidth = 1.5;
+  for (let i = first; i <= last; i++) {
+    if (yTop[i] > lastY + 40) break;
+    const d = data[i];
+    if (d.pi == null) continue;
+    const pi = d.pi;
+    if (pi > visibleMax) continue;
+    const x1 = nX(data[pi]), y1 = nY(pi) - scrollY;
+    const x2 = nX(d), y2 = nY(i) - scrollY;
+    const dimmed = searchMatches && !searchMatches.has(i) && !searchMatches.has(pi);
+    ctx.strokeStyle = dimmed ? '#111' : nColor(d);
+    ctx.globalAlpha = dimmed ? 0.08 : 0.3;
+    ctx.beginPath();
+    if (x1 === x2) {
+      ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    } else {
+      const my = (y1+y2)/2;
+      ctx.moveTo(x1,y1); ctx.bezierCurveTo(x1,my,x2,my,x2,y2);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Gap labels (for pauses > 1s, drawn in the gap space)
+  ctx.font = '9px "SF Mono","Fira Code",monospace';
+  ctx.textAlign = 'center';
+  for (let i = first; i <= last; i++) {
+    if (yTop[i] > lastY + 40) break;
+    if (deltaMs[i] < 1000) continue;
+    if (searchMatches && !searchMatches.has(i)) continue;
+    const gapTop = nY(i-1) - scrollY;
+    const gapBot = nY(i) - scrollY;
+    const mid = (gapTop + gapBot) / 2;
+    if (mid < -10 || mid > viewH + 10) continue;
+    // Faint dashed line across the gap
+    ctx.strokeStyle = '#222';
+    ctx.globalAlpha = 0.5;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(4, mid); ctx.lineTo(RAIL_W - 4, mid);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Time label
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = deltaMs[i] >= 10000 ? '#f87171' : deltaMs[i] >= 3000 ? '#f59e0b' : '#555';
+    ctx.fillText(fmtDelta(deltaMs[i]), RAIL_W / 2, mid + 3);
+    ctx.globalAlpha = 1;
+  }
+
+  // Nodes
+  for (let i = first; i <= last; i++) {
+    if (yTop[i] > lastY + 40) break;
+    const d = data[i];
+    const x = nX(d), y = nY(i) - scrollY;
+    if (y < -NODE_R || y > viewH + NODE_R) continue;
+    const dimmed = searchMatches && !searchMatches.has(i);
+    const isSel = i === selectedIdx;
+    const isHead = i === visibleMax;
+
+    ctx.beginPath();
+    const r = isSel ? NODE_R + 2 : isHead ? NODE_R + 1 : NODE_R;
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+
+    if (dimmed) {
+      ctx.fillStyle = '#1a1a2e';
+    } else if (isSel) {
+      ctx.fillStyle = '#fff';
+    } else if (isHead) {
+      ctx.fillStyle = '#fff';
+    } else {
+      ctx.fillStyle = nColor(d);
+    }
+    ctx.fill();
+
+    // Ring on selected / head
+    if ((isSel || isHead) && !dimmed) {
+      ctx.strokeStyle = isHead ? COLORS.user : '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.lineWidth = 1.5;
+    }
+  }
+}
+
+// ==============================
+// VIRTUALIZED DOM LABELS
+// ==============================
+const POOL = 80;
+const pool = [];
+const active = new Map();
+
+for (let p = 0; p < POOL; p++) {
+  const row = document.createElement('div');
+  row.className = 'row'; row.style.display = 'none';
+  const t = document.createElement('span'); t.className = 'tag';
+  const d = document.createElement('span'); d.className = 'desc';
+  const m = document.createElement('span'); m.className = 'meta';
+  row.appendChild(t); row.appendChild(d); row.appendChild(m);
+  row._t = t; row._d = d; row._m = m; row._i = -1;
+  labelLayer.appendChild(row);
+  pool.push(row);
+}
+
+function updateLabels() {
+  const scrollY = scrollCt.scrollTop;
+  const first = Math.max(0, findFirst(scrollY) - 2);
+  const lastY = scrollY + viewH;
+  const need = new Set();
+  for (let i = first; i <= Math.min(N-1, visibleMax); i++) {
+    if (yTop[i] > lastY + 40) break;
+    need.add(i);
+  }
+
+  for (const [idx, row] of active) {
+    if (!need.has(idx)) { row.style.display = 'none'; row._i = -1; active.delete(idx); }
+  }
+
+  let pc = 0;
+  for (const idx of need) {
+    if (active.has(idx)) { updateRowState(active.get(idx), idx); continue; }
+    let fr = null;
+    while (pc < pool.length) { if (pool[pc]._i === -1) { fr = pool[pc]; break; } pc++; }
+    if (!fr) break;
+
+    const L = labels[idx];
+    fr.style.top = yTop[idx] + 'px';
+    fr.style.height = rowH[idx] + 'px';
+    fr.style.display = 'flex';
+    fr._i = idx;
+    fr._t.textContent = L.tag;
+    fr._t.style.color = L.color;
+    fr._d.textContent = L.desc;
+    fr._m.textContent = (L.delta ? L.delta + '  ' : '') + '#' + L.seq + '  ' + L.ts;
+    fr.onclick = () => { selectedIdx = idx; showDetail(idx); refresh(); };
+    active.set(idx, fr);
+    updateRowState(fr, idx);
+  }
+}
+
+function updateRowState(row, idx) {
+  const dim = !!(searchMatches && !searchMatches.has(idx));
+  row.classList.toggle('dimmed', dim);
+  row.classList.toggle('selected', idx === selectedIdx);
+  row.classList.toggle('head', idx === visibleMax && visibleMax < N - 1);
+}
+
+// ==============================
+// REFRESH
+// ==============================
+function refresh() {
+  drawRail();
+  updateLabels();
+}
+
+scrollCt.addEventListener('scroll', refresh, { passive: true });
+new ResizeObserver(() => { resizeRail(); refresh(); }).observe(graphArea);
+
+// ==============================
+// DETAIL PANEL
+// ==============================
+let detailReqId = 0;
+
+async function showDetail(idx) {
+  const d = data[idx];
+  const panel = document.getElementById('detail');
+  const ct = document.getElementById('detail-content');
+  ct.textContent = '';
+
+  ct.appendChild(mk('h3', null, d.type.toUpperCase() + ' #' + d.seq));
+  const br = mk('div','field');
+  const bc = d.type==='user'?'b-user':d.type==='assistant'?'b-asst':d.type==='progress'?'b-tool':'b-sys';
+  br.appendChild(mkB(d.type,bc));
+  if (d.toolStatus==='failed') br.appendChild(mkB('FAILED','b-err'));
+  if (d.toolName) br.appendChild(mkB(d.toolName,'b-tool'));
+  ct.appendChild(br);
+
+  mkF(ct,'UUID',d.fid||d.id);
+  if (d.fpid) mkF(ct,'Parent UUID',d.fpid);
+  mkF(ct,'Timestamp',d.ts);
+  if (deltaMs[idx] > 0) mkF(ct,'Gap from prev', fmtDelta(deltaMs[idx]));
+  mkF(ct,'Lane',String(d.lane));
+
+  if (d.type==='progress') {
+    if (d.progressType) mkF(ct,'Progress Type',d.progressType);
+    if (d.toolName) mkF(ct,'Tool',d.toolName);
+    if (d.toolStatus) mkF(ct,'Status',d.toolStatus);
+    if (d.toolUseId) mkF(ct,'Tool Use ID',d.toolUseId);
+  }
+
+  panel.classList.remove('closed');
+
+  // Fetch full content from API
+  const uuid = d.fid;
+  if (!uuid) return;
+
+  const reqId = ++detailReqId;
+  const loading = mk('div','field');
+  loading.appendChild(mk('div','field-label','Loading full content...'));
+  ct.appendChild(loading);
+
+  try {
+    const resp = await fetch('/api/{{ name }}/event/' + encodeURIComponent(uuid));
+    if (reqId !== detailReqId) return; // stale
+    if (!resp.ok) { loading.querySelector('.field-label').textContent = 'Failed to load'; return; }
+    const ev = await resp.json();
+    if (reqId !== detailReqId) return;
+    ct.removeChild(loading);
+    renderFullContent(ct, ev, d);
+  } catch(e) {
+    if (reqId !== detailReqId) return;
+    loading.querySelector('.field-label').textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderFullContent(ct, ev, d) {
+  const msg = ev.message;
+  const raw = ev.raw;
+
+  if (d.type === 'progress' && raw) {
+    const progData = raw.data;
+    if (progData) {
+      if (progData.input) {
+        mkF(ct, 'Input', '');
+        const tb = mk('table','ptable');
+        for (const [k,v] of Object.entries(progData.input)) {
+          const tr = mk('tr');
+          const tk = mk('td','pk'); tk.textContent = k;
+          const tv = mk('td','pv'); tv.textContent = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+          tr.appendChild(tk); tr.appendChild(tv); tb.appendChild(tr);
+        }
+        ct.appendChild(tb);
+      }
+      if (progData.output) {
+        mkF(ct, 'Output', '');
+        const b = mk('div','code-block');
+        b.textContent = typeof progData.output === 'string' ? progData.output : JSON.stringify(progData.output, null, 2);
+        ct.appendChild(b);
+      }
+    }
+    return;
+  }
+
+  if (!msg || !msg.content) return;
+
+  const content = msg.content;
+  if (typeof content === 'string') {
+    mkF(ct, 'Content', '');
+    const b = mk('div','code-block'); b.textContent = content; ct.appendChild(b);
+    return;
+  }
+  if (!Array.isArray(content)) return;
+
+  mkF(ct, 'Content', content.length + ' items');
+  for (const item of content) {
+    if (typeof item === 'string') {
+      const b = mk('div','code-block'); b.textContent = item; ct.appendChild(b);
+      continue;
+    }
+    if (typeof item !== 'object') continue;
+
+    if (item.type === 'text') {
+      const b = mk('div','code-block'); b.textContent = item.text || ''; ct.appendChild(b);
+    } else if (item.type === 'tool_use') {
+      const r = mk('div','field'); r.appendChild(mkB(item.name || '','b-tool'));
+      const sp = mk('span'); sp.style.cssText = 'color:#555;font-size:10px'; sp.textContent = item.id || ''; r.appendChild(sp); ct.appendChild(r);
+      if (item.input && typeof item.input === 'object' && Object.keys(item.input).length > 0) {
+        const tb = mk('table','ptable');
+        for (const [k,v] of Object.entries(item.input)) {
+          const tr = mk('tr');
+          const tk = mk('td','pk'); tk.textContent = k;
+          const tv = mk('td','pv'); tv.textContent = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+          tr.appendChild(tk); tr.appendChild(tv); tb.appendChild(tr);
+        }
+        ct.appendChild(tb);
+      }
+    } else if (item.type === 'tool_result') {
+      const r = mk('div','field'); r.appendChild(mkB('result', item.is_error ? 'b-err' : 'b-tool'));
+      if (item.tool_use_id) {
+        const sp = mk('span'); sp.style.cssText = 'color:#555;font-size:10px;margin-left:6px'; sp.textContent = item.tool_use_id; r.appendChild(sp);
+      }
+      ct.appendChild(r);
+      const rc = item.content;
+      if (typeof rc === 'string') {
+        const b = mk('div','code-block'); b.textContent = rc; ct.appendChild(b);
+      } else if (Array.isArray(rc)) {
+        for (const c of rc) {
+          if (typeof c === 'object' && c.text) {
+            const b = mk('div','code-block'); b.textContent = c.text; ct.appendChild(b);
+          }
+        }
+      }
+    }
+  }
+}
+
+function mk(t,c,x) { const e=document.createElement(t); if(c)e.className=c; if(x)e.textContent=x; return e; }
+function mkB(t,c) { return mk('span','badge '+c,t); }
+function mkF(p,l,v) { const d=mk('div','field'); d.appendChild(mk('div','field-label',l)); d.appendChild(mk('div','field-value',v)); p.appendChild(d); }
+
+// ==============================
+// CONTROLS
+// ==============================
+const slider = document.getElementById('time-slider');
+const tlInfo = document.getElementById('tl-info');
+slider.max = N - 1; slider.value = N - 1;
+
+function focusHead() {
+  if (!playing) { selectedIdx = visibleMax; showDetail(visibleMax); }
+}
+
+slider.addEventListener('input', () => { stopPlay(); visibleMax = parseInt(slider.value); updateTlInfo(); refresh(); scrollTo(visibleMax); focusHead(); });
+function updateTlInfo() {
+  const d = data[visibleMax];
+  tlInfo.textContent = (visibleMax+1)+' / '+N+'  '+(d?d.ts.substring(0,19).replace('T',' '):'');
+}
+
+const speeds = [1, 2, 4, 8, 16];
+let speedIdx = 1, stepSize = 2;
+const speedLabel = document.getElementById('speed-label');
+const btnPlay = document.getElementById('btn-play');
+let playing = false, playRAF = null, lastT = 0;
+
+function startPlay() {
+  if (visibleMax >= N - 1) { visibleMax = 0; slider.value = 0; updateTlInfo(); refresh(); scrollCt.scrollTop = 0; }
+  playing = true;
+  btnPlay.textContent = '\u23F8';
+  btnPlay.classList.add('active');
+  lastT = 0;
+  playRAF = requestAnimationFrame(tick);
+}
+function stopPlay() {
+  const wasPlaying = playing;
+  playing = false;
+  btnPlay.textContent = '\u25B6';
+  btnPlay.classList.remove('active');
+  if (playRAF) { cancelAnimationFrame(playRAF); playRAF = null; }
+  if (wasPlaying) focusHead();
+}
+function tick(ts) {
+  if (!playing) return;
+  if (!lastT) lastT = ts;
+  const interval = Math.max(16, 80 / Math.max(1, stepSize / 4));
+  if (ts - lastT >= interval) {
+    lastT = ts;
+    visibleMax = Math.min(N - 1, visibleMax + stepSize);
+    slider.value = visibleMax;
+    updateTlInfo();
+    refresh();
+    scrollTo(visibleMax);
+    if (visibleMax >= N - 1) { stopPlay(); return; }
+  }
+  playRAF = requestAnimationFrame(tick);
+}
+
+function scrollTo(idx) {
+  const y = nY(idx);
+  const top = scrollCt.scrollTop;
+  if (y < top + 60 || y > top + viewH - 60) {
+    scrollCt.scrollTop = Math.max(0, y - viewH / 2);
+  }
+}
+
+btnPlay.addEventListener('click', () => { if (playing) stopPlay(); else startPlay(); });
+document.getElementById('btn-start').addEventListener('click', () => { stopPlay(); visibleMax=0; slider.value=0; updateTlInfo(); refresh(); scrollCt.scrollTop=0; focusHead(); });
+document.getElementById('btn-end').addEventListener('click', () => { stopPlay(); visibleMax=N-1; slider.value=N-1; updateTlInfo(); refresh(); scrollTo(visibleMax); focusHead(); });
+document.getElementById('btn-speed').addEventListener('click', () => { speedIdx=(speedIdx+1)%speeds.length; stepSize=speeds[speedIdx]; speedLabel.textContent=stepSize+'x'; });
+
+// Search
+const searchInput = document.getElementById('search-input');
+const searchCount = document.getElementById('search-count');
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.toLowerCase().trim();
+  if (!q) { searchMatches=null; searchCount.textContent=''; refresh(); return; }
+  searchMatches = new Set();
+  for (let i=0;i<N;i++) {
+    const d=data[i];
+    const parts=[d.fid,d.id,d.type,d.toolName,d.toolStatus,d.progressType];
+    if (d.items) for (const it of d.items) { parts.push(it.name,it.preview,it.kind); if(it.params)parts.push(JSON.stringify(it.params)); }
+    if (parts.filter(Boolean).join(' ').toLowerCase().includes(q)) searchMatches.add(i);
+  }
+  searchCount.textContent = searchMatches.size+' matches';
+  refresh();
+});
+
+// Keyboard
+document.addEventListener('keydown', (e) => {
+  if (e.target === searchInput) return;
+  if (e.key === ' ') { e.preventDefault(); btnPlay.click(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); stopPlay(); visibleMax=Math.min(N-1,visibleMax+1); slider.value=visibleMax; updateTlInfo(); refresh(); scrollTo(visibleMax); focusHead(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); stopPlay(); visibleMax=Math.max(0,visibleMax-1); slider.value=visibleMax; updateTlInfo(); refresh(); scrollTo(visibleMax); focusHead(); }
+  if (e.key === 'Home') { document.getElementById('btn-start').click(); }
+  if (e.key === 'End') { document.getElementById('btn-end').click(); }
+  if (e.key === 'Escape') { selectedIdx=-1; document.getElementById('detail').classList.add('closed'); refresh(); }
+});
+
+// Init
+updateTlInfo();
+selectedIdx = 0;
+showDetail(0);
+refresh();
+
+})();
+</script>
+</body>
+</html>

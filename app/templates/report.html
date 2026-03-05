@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Report: {{ slug }}</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #111118; --border: #1a1a2e; --text: #ccc; --muted: #555; --accent: #f59e0b; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "SF Mono","Fira Code",monospace; padding: 32px; }
+  .nav { display: flex; gap: 16px; margin-bottom: 24px; font-size: 11px; }
+  .nav a { color: var(--muted); text-decoration: none; }
+  .nav a:hover { color: var(--accent); }
+  h1 { font-size: 18px; color: #fff; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .kpi-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 6px; }
+  .kpi-value { font-size: 22px; font-weight: 700; color: #fff; }
+  .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .section { margin-bottom: 32px; }
+  .section h2 { font-size: 13px; color: #fff; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px; border-bottom: 1px solid var(--border); }
+  .bar { height: 6px; background: var(--accent); border-radius: 3px; }
+  .timeline { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .timeline-bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; }
+  .timeline-bar { flex: 1; min-width: 0; background: var(--accent); border-radius: 2px 2px 0 0; position: relative; cursor: default; transition: opacity 0.15s; }
+  .timeline-bar:hover { opacity: 0.8; }
+  .timeline-bar .tip { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #222; color: #fff; font-size: 10px; padding: 3px 6px; border-radius: 4px; white-space: nowrap; z-index: 1; }
+  .timeline-bar:hover .tip { display: block; }
+  .timeline-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 10px; color: var(--muted); }
+  #loading { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="nav">
+  <a href="/">Home</a>
+  <a href="/session/{{ name }}/trajectory">Trajectory</a>
+  <a href="/session/{{ name }}/sql">SQL</a>
+</div>
+<h1>Session Report: {{ slug }}</h1>
+<div id="loading">Loading...</div>
+<div id="content" style="display:none">
+  <div class="grid" id="kpis"></div>
+  <div class="section">
+    <h2>Events Timeline</h2>
+    <div class="timeline">
+      <div class="timeline-bars" id="timeline-bars"></div>
+      <div class="timeline-labels" id="timeline-labels"></div>
+    </div>
+  </div>
+  <div class="section">
+    <h2>Event Breakdown</h2>
+    <table id="events-table"><thead><tr><th>Type</th><th>Count</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="section">
+    <h2>Tool Usage</h2>
+    <table id="tools-table"><thead><tr><th>Tool</th><th>Calls</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="section">
+    <h2>Token Usage</h2>
+    <table id="tokens-table"><thead><tr><th>Category</th><th>Tokens</th><th>Cost</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+<script>
+(async function() {
+  const resp = await fetch('/api/{{ name }}/report');
+  const d = await resp.json();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+
+  function fmt(n) { return n.toLocaleString(); }
+  function fmtM(n) { return (n / 1_000_000).toFixed(1) + 'M'; }
+
+  function createKpiCard(label, value) {
+    const el = document.createElement('div');
+    el.className = 'kpi';
+    const labelDiv = document.createElement('div');
+    labelDiv.className = 'kpi-label';
+    labelDiv.textContent = label;
+    const valueDiv = document.createElement('div');
+    valueDiv.className = 'kpi-value';
+    valueDiv.textContent = value;
+    el.appendChild(labelDiv);
+    el.appendChild(valueDiv);
+    return el;
+  }
+
+  function createTableRow(cells, barWidth) {
+    const tr = document.createElement('tr');
+    cells.forEach((text, i) => {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    if (barWidth !== undefined) {
+      const td = document.createElement('td');
+      td.style.width = '40%';
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.width = barWidth + '%';
+      td.appendChild(bar);
+      tr.appendChild(td);
+    }
+    return tr;
+  }
+
+  // KPIs
+  const kpis = document.getElementById('kpis');
+  const cards = [
+    { label: 'Total Events', value: fmt(d.total_events) },
+    { label: 'User Turns', value: fmt(d.type_counts.user || 0) },
+    { label: 'Assistant Turns', value: fmt(d.type_counts.assistant || 0) },
+    { label: 'Tool Calls', value: fmt(d.type_counts.progress || 0) },
+    { label: 'Total Tokens', value: fmtM(d.total_tokens) },
+    { label: 'Estimated Cost', value: '$' + d.estimated_cost.toFixed(2) },
+  ];
+  for (const c of cards) {
+    kpis.appendChild(createKpiCard(c.label, c.value));
+  }
+
+  // Timeline
+  const tBars = document.getElementById('timeline-bars');
+  const tLabels = document.getElementById('timeline-labels');
+  const hourly = d.hourly || [];
+  if (hourly.length) {
+    const maxCount = Math.max(...hourly.map(h => h.count));
+    for (const h of hourly) {
+      const bar = document.createElement('div');
+      bar.className = 'timeline-bar';
+      const pct = maxCount > 0 ? (h.count / maxCount * 100) : 0;
+      bar.style.height = Math.max(pct, 1) + '%';
+      if (h.count === 0) { bar.style.background = 'var(--border)'; bar.style.height = '2px'; }
+      const ts = new Date(h.hour);
+      const label = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+      const tip = document.createElement('span');
+      tip.className = 'tip';
+      tip.textContent = label + ' — ' + fmt(h.count) + ' events';
+      bar.appendChild(tip);
+      tBars.appendChild(bar);
+    }
+    // Labels: show first, last, and a few intermediate hours
+    const step = Math.max(1, Math.floor(hourly.length / 5));
+    for (let i = 0; i < hourly.length; i += step) {
+      const ts = new Date(hourly[i].hour);
+      const span = document.createElement('span');
+      span.textContent = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+      tLabels.appendChild(span);
+    }
+    // Always include the last label
+    if (hourly.length > 1 && (hourly.length - 1) % step !== 0) {
+      const ts = new Date(hourly[hourly.length - 1].hour);
+      const span = document.createElement('span');
+      span.textContent = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+      tLabels.appendChild(span);
+    }
+  }
+
+  // Events
+  const eb = document.querySelector('#events-table tbody');
+  const maxEvt = Math.max(...Object.values(d.type_counts));
+  for (const [type, count] of Object.entries(d.type_counts)) {
+    eb.appendChild(createTableRow([type, fmt(count)], count/maxEvt*100));
+  }
+
+  // Tools
+  const tb = document.querySelector('#tools-table tbody');
+  const maxTool = d.tools.length ? d.tools[0].count : 1;
+  for (const t of d.tools) {
+    tb.appendChild(createTableRow([t.name, fmt(t.count)], t.count/maxTool*100));
+  }
+
+  // Tokens
+  const tkb = document.querySelector('#tokens-table tbody');
+  const rates = { 'Input': 5, 'Output': 25, 'Cache Creation': 6.25, 'Cache Read': 0.50 };
+  const toks = [
+    ['Input', d.input_tokens],
+    ['Output', d.output_tokens],
+    ['Cache Creation', d.cache_creation_tokens],
+    ['Cache Read', d.cache_read_tokens],
+  ];
+  for (const [label, val] of toks) {
+    const cost = (val * rates[label] / 1_000_000);
+    tkb.appendChild(createTableRow([label, fmt(val), '$' + cost.toFixed(4)]));
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Claude Session Analyzer</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #111118; --border: #1a1a2e; --text: #ccc; --muted: #555; --accent: #f59e0b; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "SF Mono","Fira Code",monospace; display: flex; justify-content: center; padding: 60px 20px; }
+  .wrap { max-width: 640px; width: 100%; }
+  h1 { font-size: 20px; color: #fff; margin-bottom: 8px; }
+  .sub { font-size: 12px; color: var(--muted); margin-bottom: 32px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 24px; margin-bottom: 24px; }
+  h2 { font-size: 13px; color: #fff; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .drop { display: block; border: 2px dashed var(--border); border-radius: 8px; padding: 32px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+  .drop:hover, .drop.over { border-color: var(--accent); }
+  .drop input { display: none; }
+  .drop p { font-size: 13px; color: var(--muted); }
+  .drop .hint { font-size: 11px; color: #333; margin-top: 8px; }
+  .sessions { list-style: none; }
+  .sessions li { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .sessions li:last-child { border: none; }
+  .sname { font-size: 13px; color: #fff; }
+  .ssize { font-size: 11px; color: var(--muted); margin-left: 12px; }
+  .slinks { display: flex; gap: 10px; }
+  .slinks a { font-size: 11px; color: var(--accent); text-decoration: none; }
+  .slinks a:hover { text-decoration: underline; }
+  .del-btn { background: none; border: none; color: #555; cursor: pointer; font-size: 11px; font-family: inherit; }
+  .del-btn:hover { color: #f87171; }
+  .empty { font-size: 12px; color: #333; text-align: center; padding: 16px; }
+  .progress { display: none; margin-top: 16px; }
+  .progress-track { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; transition: width 0.2s; }
+  .progress-label { font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .progress-error { font-size: 12px; color: #f87171; margin-top: 8px; display: none; }
+  @keyframes barberpole { from { background-position: 0 0; } to { background-position: 20px 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Claude Session Analyzer</h1>
+  <p class="sub">Upload a Claude Code .jsonl session log to explore its trajectory, metrics, and data.</p>
+
+  <div class="card">
+    <h2>Upload Session</h2>
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+      <label class="drop" id="dropzone">
+        <input type="file" name="file" accept=".jsonl" required>
+        <p>Drop .jsonl file here or click to browse</p>
+        <p class="hint">Claude Code session logs (type: user/assistant/progress)</p>
+      </label>
+    </form>
+    <div class="progress" id="progress">
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-label" id="progress-label">Uploading...</div>
+      <div class="progress-error" id="progress-error"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Sessions</h2>
+    {% if sessions %}
+    <ul class="sessions">
+      {% for s in sessions %}
+      <li>
+        <div>
+          <span class="sname">{{ s.slug }}</span>
+          <span class="ssize">{{ s.size_mb }} MB</span>
+        </div>
+        <div class="slinks">
+          <a href="/session/{{ s.name }}/trajectory">Trajectory</a>
+          <a href="/session/{{ s.name }}/report">Report</a>
+          <a href="/session/{{ s.name }}/sql">SQL</a>
+          <button class="del-btn" onclick="del('{{ s.name }}')">Delete</button>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">No sessions yet. Upload a .jsonl file to get started.</p>
+    {% endif %}
+  </div>
+</div>
+<script>
+const dz = document.getElementById('dropzone');
+const form = document.getElementById('upload-form');
+const input = form.querySelector('input[type=file]');
+const progress = document.getElementById('progress');
+const fill = document.getElementById('progress-fill');
+const label = document.getElementById('progress-label');
+const errorEl = document.getElementById('progress-error');
+
+function uploadFile(file) {
+  progress.style.display = 'block';
+  errorEl.style.display = 'none';
+  fill.style.width = '0%';
+  label.textContent = 'Uploading ' + file.name + '...';
+  dz.style.pointerEvents = 'none';
+  dz.style.opacity = '0.5';
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/upload');
+
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) {
+      const pct = Math.round(e.loaded / e.total * 100);
+      fill.style.width = pct + '%';
+      label.textContent = 'Uploading ' + file.name + '... ' + pct + '%';
+      if (pct >= 100) {
+        label.textContent = 'Parsing session data...';
+        fill.style.width = '100%';
+        fill.style.transition = 'none';
+        fill.style.background = 'linear-gradient(90deg, var(--accent) 25%, transparent 25%, transparent 50%, var(--accent) 50%, var(--accent) 75%, transparent 75%)';
+        fill.style.backgroundSize = '20px 100%';
+        fill.style.animation = 'barberpole 0.6s linear infinite';
+      }
+    }
+  };
+
+  xhr.onload = function() {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      label.textContent = 'Done! Redirecting...';
+      fill.style.background = 'var(--accent)';
+      fill.style.animation = 'none';
+      const data = JSON.parse(xhr.responseText);
+      window.location.href = data.url;
+    } else {
+      errorEl.textContent = 'Upload failed: ' + xhr.statusText;
+      errorEl.style.display = 'block';
+      label.textContent = '';
+      dz.style.pointerEvents = '';
+      dz.style.opacity = '';
+    }
+  };
+
+  xhr.onerror = function() {
+    errorEl.textContent = 'Network error during upload.';
+    errorEl.style.display = 'block';
+    label.textContent = '';
+    dz.style.pointerEvents = '';
+    dz.style.opacity = '';
+  };
+
+  xhr.send(fd);
+}
+
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('over');
+  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+input.addEventListener('change', () => { if (input.files.length) uploadFile(input.files[0]); });
+
+async function del(name) {
+  if (!confirm('Delete session ' + name + '?')) return;
+  await fetch('/api/' + name, { method: 'DELETE' });
+  location.reload();
+}
+</script>
+</body>
+</html>

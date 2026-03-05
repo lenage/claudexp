@@ -650,8 +650,10 @@ searchInput.addEventListener('input', () => {
 document.addEventListener('keydown', (e) => {
   if (e.target === searchInput) return;
   if (e.key === ' ') { e.preventDefault(); btnPlay.click(); }
-  if (e.key === 'ArrowRight') { e.preventDefault(); stopPlay(); visibleMax=Math.min(N-1,visibleMax+1); slider.value=visibleMax; updateTlInfo(); refresh(); scrollTo(visibleMax); focusHead(); }
-  if (e.key === 'ArrowLeft') { e.preventDefault(); stopPlay(); visibleMax=Math.max(0,visibleMax-1); slider.value=visibleMax; updateTlInfo(); refresh(); scrollTo(visibleMax); focusHead(); }
+  if (e.key === 'ArrowRight' && e.shiftKey) { e.preventDefault(); selectedIdx = N-1; showDetail(selectedIdx); scrollTo(selectedIdx); refresh(); }
+  else if (e.key === 'ArrowLeft' && e.shiftKey) { e.preventDefault(); selectedIdx = 0; showDetail(selectedIdx); scrollTo(selectedIdx); refresh(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); selectedIdx = Math.min(N-1, selectedIdx + 1); showDetail(selectedIdx); scrollTo(selectedIdx); refresh(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); selectedIdx = Math.max(0, selectedIdx - 1); showDetail(selectedIdx); scrollTo(selectedIdx); refresh(); }
   if (e.key === 'Home') { document.getElementById('btn-start').click(); }
   if (e.key === 'End') { document.getElementById('btn-end').click(); }
   if (e.key === 'Escape') { selectedIdx=-1; document.getElementById('detail').classList.add('closed'); refresh(); }
